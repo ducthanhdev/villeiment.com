@@ -1,0 +1,10 @@
+{
+    "id": "botble/shofy-fashion",
+    "name": "PWS Fashion",
+    "namespace": "Theme\\ShofyFashion\\",
+    "author": "DuyKhaiDev",
+    "url": "https://pwsdata.vn",
+    "version": "1.0.9",
+    "description": "PWS - eCommerce & Multivendor Marketplace Laravel Platform",
+    "required_plugins": ["ecommerce"]
+}

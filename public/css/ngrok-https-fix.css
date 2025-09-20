@@ -1,0 +1,41 @@
+/**
+ * CSS fixes for ngrok HTTPS testing
+ * Forces HTTPS for all resources
+ */
+
+/* Fix for fonts loaded over HTTP */
+@font-face {
+    font-family: 'FallbackFont';
+    src: url('data:font/woff2;base64,') format('woff2');
+    font-display: swap;
+}
+
+/* Ensure all background images use HTTPS */
+* {
+    /* This will be overridden by JavaScript */
+}
+
+/* Fix for any hardcoded HTTP URLs in CSS */
+a[href^="http://"] {
+    /* Will be fixed by JavaScript */
+}
+
+/* Fix for forms with HTTP actions */
+form[action^="http://"] {
+    /* Will be fixed by JavaScript */
+}
+
+/* Ensure images use HTTPS */
+img[src^="http://"] {
+    /* Will be fixed by JavaScript */
+}
+
+/* Fix for stylesheets */
+link[href^="http://"] {
+    /* Will be fixed by JavaScript */
+}
+
+/* Fix for scripts */
+script[src^="http://"] {
+    /* Will be fixed by JavaScript */
+}
