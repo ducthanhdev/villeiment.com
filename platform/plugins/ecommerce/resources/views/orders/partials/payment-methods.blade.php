@@ -43,19 +43,12 @@
             
             {{-- Credit Card --}}
             <li class="list-group-item text-center">
-                <button id="card-pay-btn" class="btn btn-outline-primary w-100" data-method="stripe-card" onclick="return false;">
+                <button id="card-pay-btn" class="btn btn-outline-primary w-100" data-method="card">
                     <img src="{{ asset('images/visa-logo.svg') }}" style="height:20px" class="me-2">
-                    Credit Card (Stripe Only)
+                    Credit Card
                 </button>
                 <div id="card-container" style="display:none;" class="mt-3">
                     <div id="card-element"></div>
-                    <div class="form-group mt-3">
-                        <label for="postal-code" class="form-label">ZIP/Postal Code</label>
-                        <input type="text" id="postal-code" class="form-control" placeholder="Nhập mã ZIP/Postal Code" required>
-                        <small class="form-text text-muted">
-                            Ví dụ: 12345 (US), M5V 3A8 (Canada), SW1A 1AA (UK)
-                        </small>
-                    </div>
                     <button id="card-submit" class="btn btn-primary w-100 mt-3" style="display:none;">
                         Pay ${{ number_format($orderAmount, 2) }}
                     </button>
@@ -77,26 +70,7 @@
     </div>
     
     {{-- Load Stripe.js SDK --}}
-    <script src="https://js.stripe.com/v3/"></script>
-    
-    {{-- Hide Stripe Link button --}}
-    <style>
-        .StripeElement--link {
-            display: none !important;
-        }
-        [data-testid="link-button"] {
-            display: none !important;
-        }
-        button[data-testid="link-button"] {
-            display: none !important;
-        }
-        .link-button {
-            display: none !important;
-        }
-        [class*="link"] button {
-            display: none !important;
-        }
-    </style> 
+    <script src="https://js.stripe.com/v3/"></script> 
     <script>
         let stripe;
         let elements;
@@ -509,15 +483,7 @@
             });
             
             // Card Payment Button
-            document.getElementById('card-pay-btn').addEventListener('click', async function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                
-                console.log('🔥 STRIPE CREDIT CARD BUTTON CLICKED 🔥');
-                console.log('Event:', e);
-                console.log('Button element:', this);
-                
+            document.getElementById('card-pay-btn').addEventListener('click', async function() {
                 hideError();
                 
                 const cardContainer = document.getElementById('card-container');
@@ -530,15 +496,6 @@
                         
                         elements = stripe.elements({
                             clientSecret: paymentIntent.client_secret,
-                            // Force only card payment method
-                            appearance: {
-                                variables: {
-                                    colorPrimary: '#0570de',
-                                }
-                            },
-                            // Disable all other payment methods
-                            paymentMethodCreation: 'manual',
-                            loader: 'auto'
                         });
                         
                         const cardElement = elements.create('card', {
@@ -551,58 +508,12 @@
                                     },
                                 },
                             },
-                            // Hide Stripe's postal code field (we have custom one)
-                            hidePostalCode: true,
-                            // Explicitly disable Link and other payment methods
-                            disableLink: true,
-                            disableWallets: ['link', 'applePay', 'googlePay'],
-                            hideIcon: false,
                         });
                         
                         const cardElementContainer = document.getElementById('card-element');
                         cardElementContainer.innerHTML = '';
                         
                         cardElement.mount(cardElementContainer);
-                        
-                        // Block Stripe Link navigation attempts
-                        window.addEventListener('message', function(event) {
-                            if (event.origin.includes('checkout.link.com') || 
-                                event.origin.includes('js.stripe.com')) {
-                                console.log('🚫 Blocked Stripe Link navigation attempt:', event);
-                                event.preventDefault();
-                                event.stopPropagation();
-                                return false;
-                            }
-                        }, true);
-                        
-                        // Override window.open to prevent Stripe Link popups
-                        const originalOpen = window.open;
-                        window.open = function(...args) {
-                            const url = args[0];
-                            if (url && (url.includes('checkout.link.com') || url.includes('link.stripe.com'))) {
-                                console.log('🚫 Blocked Stripe Link window.open:', url);
-                                return null;
-                            }
-                            return originalOpen.apply(this, args);
-                        };
-                        
-                        // Hide Stripe Link button after mounting
-                        setTimeout(() => {
-                            const linkButtons = document.querySelectorAll('[data-testid="link-button"], .link-button, button[class*="link"]');
-                            linkButtons.forEach(btn => {
-                                btn.style.display = 'none';
-                                btn.remove();
-                            });
-                            
-                            // Also hide any buttons with "Lưu bằng link" text
-                            const allButtons = document.querySelectorAll('button');
-                            allButtons.forEach(btn => {
-                                if (btn.textContent.includes('Lưu bằng link') || btn.textContent.includes('Save with link')) {
-                                    btn.style.display = 'none';
-                                    btn.remove();
-                                }
-                            });
-                        }, 100);
                         
                         cardContainer.style.display = 'block';
                         document.getElementById('card-submit').style.display = 'block';
@@ -613,36 +524,14 @@
                             showLoading();
                             
                             try {
-                                const postalCode = document.getElementById('postal-code').value;
-                                
-                                console.log('ZIP Code entered:', postalCode);
-                                console.log('ZIP Code length:', postalCode ? postalCode.length : 0);
-                                
-                                if (!postalCode || postalCode.trim() === '') {
-                                    console.log('ZIP Code validation failed: empty or whitespace');
-                                    throw new Error('Please enter a ZIP/Postal Code');
-                                }
-                                
-                                console.log('Creating payment method with ZIP:', postalCode);
-                                
                                 const {error, paymentMethod} = await stripe.createPaymentMethod({
                                     type: 'card',
                                     card: cardElement,
-                                    billing_details: {
-                                        address: {
-                                            postal_code: postalCode,
-                                        },
-                                    },
                                 });
                                 
-                                console.log('Payment method creation result:', {error, paymentMethod});
-                                
                                 if (error) {
-                                    console.log('Payment method error:', error);
                                     throw new Error(error.message);
                                 }
-                                
-                                console.log('Payment method created successfully:', paymentMethod.id);
                                 
                                 await confirmPayment(paymentMethod.id, 'card');
                                 
@@ -657,8 +546,6 @@
                 } else {
                     cardContainer.style.display = 'none';
                 }
-                
-                return false;
             });
         });
 
