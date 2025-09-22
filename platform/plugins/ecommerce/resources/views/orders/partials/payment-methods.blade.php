@@ -26,9 +26,9 @@
             {{-- Google Pay --}}
             <li class="list-group-item text-center">
                 <div id="googlePay-container">
-                    <button id="google-pay-btn" class="btn btn-outline-dark w-100 mb-2" data-method="googlePay">
+                    <button id="google-pay-btn" class="btn btn-outline-dark w-100 mb-2" data-method="googlePay" disabled>
                         <img src="{{ asset('images/google-pay-logo.svg') }}" style="height:20px" class="me-2">
-                        Thanh toán bằng Google Pay
+                        <span id="google-pay-text">Đang kiểm tra Google Pay...</span>
                     </button>
                 </div>
             </li>
@@ -36,9 +36,9 @@
             {{-- Apple Pay --}}
             <li class="list-group-item text-center">
                 <div id="applePay-container">
-                    <button id="apple-pay-btn" class="btn btn-outline-dark w-100 mb-2" data-method="applePay">
+                    <button id="apple-pay-btn" class="btn btn-outline-dark w-100 mb-2" data-method="applePay" disabled>
                         <img src="{{ asset('images/apple-pay-logo.svg') }}" style="height:20px" class="me-2">
-                        Thanh toán bằng Apple Pay
+                        <span id="apple-pay-text">Đang kiểm tra Apple Pay...</span>
                     </button>
                 </div>
             </li>
@@ -99,6 +99,18 @@
             document.querySelectorAll('button[data-method]').forEach(btn => btn.disabled = false);
         }
         
+        function handlePaymentCancellation(paymentMethod) {
+            hideLoading();
+            
+            // Force hide loading with a small delay to ensure it's hidden
+            setTimeout(() => {
+                hideLoading();
+            }, 100);
+            
+            // You can add custom logic here for cancellation
+            // For example: track analytics, show a message, etc.
+        }
+        
         async function initializeStripe() {
             if (stripe) return;
             
@@ -138,6 +150,14 @@
         }
         
         async function confirmPayment(paymentMethodId, method) {
+            // Ensure paymentIntent exists
+            if (!paymentIntent || (!paymentIntent.id && !paymentIntent.payment_intent_id)) {
+                throw new Error('Payment intent not found. Please try again.');
+            }
+            
+            // Get payment intent ID from either structure
+            const paymentIntentId = paymentIntent.id || paymentIntent.payment_intent_id;
+            
             const response = await fetch(`/stripe/confirm/{{ $token }}`, {
                 method: 'POST',
                 headers: {
@@ -146,7 +166,7 @@
                 },
                 body: JSON.stringify({
                     payment_method_id: paymentMethodId,
-                    payment_intent_id: paymentIntent.id,
+                    payment_intent_id: paymentIntentId,
                     method: method
                 })
             });
@@ -173,8 +193,7 @@
                 try {
                     paymentIntent = await createPaymentIntent();
                     
-                    // Debug currency and amount
-                    const currency = '{{ strtolower(get_application_currency()->title ?? 'usd') }}';
+                    const currency = '{{ strtolower(get_application_currency()->title ?? 'usd') }}' || 'usd';
                     const amount = Math.round({{ $orderAmount * 100 }});
                     
                     // Validate currency and amount
@@ -214,10 +233,15 @@
                     if (hasGooglePay) {
                         // Update the existing button to show it's available
                         const existingBtn = document.getElementById('google-pay-btn');
+                        const textElement = document.getElementById('google-pay-text');
                         if (existingBtn) {
+                            existingBtn.disabled = false;
                             existingBtn.style.background = '#000';
                             existingBtn.style.color = 'white';
                             existingBtn.style.border = 'none';
+                            if (textElement) {
+                                textElement.textContent = 'Thanh toán bằng Google Pay';
+                            }
                         }
                         
                         // Handle payment method creation - this is the main handler
@@ -240,14 +264,26 @@
                                     
                                     const result = await paymentRequest.show();
                                     
+                                    // Check if user cancelled (no result returned)
+                                    if (!result) {
+                                        handlePaymentCancellation('Google Pay');
+                                        return;
+                                    }
+                                    
                                     // The paymentmethod event will handle the actual payment
                                     
                                 } catch (error) {
-                                    // More specific error messages
+                                    hideLoading();
+                                    
+                                    // Handle cancellation specifically
+                                    if (error.message.includes('cancelled') || error.message.includes('canceled')) {
+                                        handlePaymentCancellation('Google Pay');
+                                        return;
+                                    }
+                                    
+                                    // Handle other errors
                                     let errorMessage = 'Google Pay error: ';
-                                    if (error.message.includes('cancelled')) {
-                                        errorMessage += 'Thanh toán đã bị hủy bởi người dùng';
-                                    } else if (error.message.includes('failed')) {
+                                    if (error.message.includes('failed')) {
                                         errorMessage += 'Thanh toán thất bại. Vui lòng thử lại';
                                     } else if (error.message.includes('not supported')) {
                                         errorMessage += 'Google Pay không được hỗ trợ trên thiết bị này';
@@ -256,18 +292,21 @@
                                     }
                                     
                                     showError(errorMessage);
-                                    hideLoading();
                                 }
                             });
                         }
                     } else {
                         // Show helpful message instead of error
                         const existingBtn = document.getElementById('google-pay-btn');
+                        const textElement = document.getElementById('google-pay-text');
                         if (existingBtn) {
                             existingBtn.style.background = '#f5f5f5';
                             existingBtn.style.color = '#666';
                             existingBtn.style.border = '1px solid #ddd';
                             existingBtn.disabled = true;
+                            if (textElement) {
+                                textElement.textContent = 'Google Pay không khả dụng';
+                            }
                         }
                     }
                     
@@ -285,9 +324,11 @@
                     paymentIntent = await createPaymentIntent();
                     
                     // Create Payment Request for Apple Pay
+                    const currency = '{{ strtolower(get_application_currency()->title ?? 'usd') }}' || 'usd';
+                    
                     const applePaymentRequest = stripe.paymentRequest({
                         country: 'US',
-                        currency: '{{ strtolower(get_application_currency()->title ?? 'usd') }}',
+                        currency: currency,
                         total: {
                             label: 'Total',
                             amount: {{ $orderAmount * 100 }},
@@ -305,10 +346,15 @@
                     if (hasApplePay) {
                         // Update the existing button to show it's available
                         const existingBtn = document.getElementById('apple-pay-btn');
+                        const textElement = document.getElementById('apple-pay-text');
                         if (existingBtn) {
+                            existingBtn.disabled = false;
                             existingBtn.style.background = '#000';
                             existingBtn.style.color = 'white';
                             existingBtn.style.border = 'none';
+                            if (textElement) {
+                                textElement.textContent = 'Thanh toán bằng Apple Pay';
+                            }
                         }
                         
                         // Handle button click
@@ -319,8 +365,11 @@
                                     
                                     const result = await applePaymentRequest.show();
                                     
+                                    
                                     if (!result) {
-                                        throw new Error('Payment request was cancelled or failed');
+                                        // User cancelled the payment
+                                        handlePaymentCancellation('Apple Pay');
+                                        return;
                                     }
                                     
                                     if (result.error) {
@@ -334,8 +383,16 @@
                                     }
                                     
                                 } catch (error) {
-                                    showError('Apple Pay error: ' + error.message);
                                     hideLoading();
+                                    
+                                    // Handle cancellation specifically
+                                    if (error.message.includes('cancelled') || error.message.includes('canceled')) {
+                                        handlePaymentCancellation('Apple Pay');
+                                        return;
+                                    }
+                                    
+                                    // Handle other errors
+                                    showError('Apple Pay error: ' + error.message);
                                 }
                             });
                         }
@@ -343,11 +400,15 @@
                     } else {
                         // Show helpful message instead of error
                         const existingBtn = document.getElementById('apple-pay-btn');
+                        const textElement = document.getElementById('apple-pay-text');
                         if (existingBtn) {
                             existingBtn.style.background = '#f5f5f5';
                             existingBtn.style.color = '#666';
                             existingBtn.style.border = '1px solid #ddd';
                             existingBtn.disabled = true;
+                            if (textElement) {
+                                textElement.textContent = 'Apple Pay không khả dụng';
+                            }
                         }
                     }
                     
@@ -370,6 +431,11 @@
                     
                     try {
                         paymentIntent = await createPaymentIntent();
+                        
+                        
+                        if (!paymentIntent || (!paymentIntent.id && !paymentIntent.payment_intent_id)) {
+                            throw new Error('Failed to create payment intent for card payment');
+                        }
                         
                         elements = stripe.elements({
                             clientSecret: paymentIntent.client_secret,
@@ -409,6 +475,7 @@
                                 if (error) {
                                     throw new Error(error.message);
                                 }
+                                
                                 
                                 await confirmPayment(paymentMethod.id, 'card');
                                 

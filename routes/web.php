@@ -41,9 +41,17 @@ Route::post('stripe/create-intent/{token}', function ($token) {
 
         \Stripe\Stripe::setApiKey($stripeSecretKey);
 
+        // Get currency with fallback to USD
+        $currency = $order->currency_id ? strtolower($order->currency_id) : 'usd';
+        
+        
         $paymentIntent = \Stripe\PaymentIntent::create([
             'amount' => (int) ($order->amount * 100), // Convert to cents
-            'currency' => strtolower($order->currency_id),
+            'currency' => $currency,
+            'automatic_payment_methods' => [
+                'enabled' => true,
+                'allow_redirects' => 'never'
+            ],
             'metadata' => [
                 'order_id' => $order->id,
                 'token' => $token,
