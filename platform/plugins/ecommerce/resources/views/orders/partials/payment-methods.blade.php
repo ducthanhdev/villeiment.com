@@ -108,22 +108,16 @@
         }
         
         async function createPaymentIntent() {
-            console.log('Creating payment intent for token:', '{{ $token }}');
-            console.log('Request URL:', "/api/stripe/create-intent/{{ $token }}");
-            
-            const response = await fetch("/api/stripe/create-intent/{{ $token }}", {
+            const response = await fetch("/stripe/create-intent/{{ $token }}", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
+                    "X-CSRF-TOKEN": document.querySelector('meta[name="csrf-token"]').getAttribute('content')
                 },
                 body: JSON.stringify({})
             });
             
-            console.log('Response status:', response.status);
-            console.log('Response headers:', response.headers);
-            
             const responseText = await response.text();
-            console.log('Response text:', responseText);
             
             if (!response.ok) {
                 try {
@@ -142,10 +136,11 @@
         }
         
         async function confirmPayment(paymentMethodId, method) {
-            const response = await fetch(`/api/stripe/confirm/{{ $token }}`, {
+            const response = await fetch(`/stripe/confirm/{{ $token }}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
                 },
                 body: JSON.stringify({
                     payment_method_id: paymentMethodId,
@@ -179,13 +174,32 @@
                 try {
                     paymentIntent = await createPaymentIntent();
                     
+                    // Debug currency and amount
+                    const currency = '{{ strtolower(get_application_currency()->title ?? 'usd') }}';
+                    const amount = Math.round({{ $orderAmount * 100 }});
+                    
+                    // Validate currency and amount
+                    if (!currency || currency.length !== 3) {
+                        throw new Error('Invalid currency: ' + currency);
+                    }
+                    
+                    if (!amount || amount <= 0) {
+                        throw new Error('Invalid amount: ' + amount);
+                    }
+                    
+                    // Check if HTTPS
+                    if (location.protocol !== 'https:') {
+                        throw new Error('Google Pay requires HTTPS. Current protocol: ' + location.protocol);
+                    }
+                    
+                    
                     // Create Payment Request for Google Pay/Apple Pay
                     const paymentRequest = stripe.paymentRequest({
-                        country: 'US',
-                        currency: '{{ strtolower(get_application_currency()->title ?? 'usd') }}',
+                        country: 'US', // Stripe only supports specific countries
+                        currency: currency,
                         total: {
                             label: 'Total',
-                            amount: {{ $orderAmount * 100 }},
+                            amount: amount,
                         },
                         requestPayerName: true,
                         requestPayerEmail: true,
@@ -199,41 +213,12 @@
                     // Check if Google Pay/Apple Pay is available
                     const canMakePayment = await paymentRequest.canMakePayment();
                     
-                    console.log('Payment Request canMakePayment result:', canMakePayment);
-                    console.log('Payment Request canMakePayment details:', {
-                        googlePay: canMakePayment?.googlePay,
-                        applePay: canMakePayment?.applePay,
-                        availableMethods: Object.keys(canMakePayment || {})
-                    });
-                    
-            // Debug browser and device info
-            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-            console.log('Browser info:', {
-                userAgent: navigator.userAgent,
-                isChrome: navigator.userAgent.includes('Chrome'),
-                isEdge: navigator.userAgent.includes('Edge'),
-                isSafari: navigator.userAgent.includes('Safari') && !navigator.userAgent.includes('Chrome'),
-                isMobile: isMobile,
-                isDesktop: !isMobile,
-                isHTTPS: location.protocol === 'https:',
-                hasPaymentRequest: 'PaymentRequest' in window
-            });
-            
-            // Show info about mobile payment methods
-            if (!isMobile) {
-                console.log('💡 Google Pay & Apple Pay chỉ khả dụng trên mobile devices');
-                console.log('💡 Trên desktop, hãy sử dụng Credit Card payment');
-            }
                     
                     // Check specifically for Google Pay
                     const hasGooglePay = canMakePayment && canMakePayment.googlePay;
                     const hasApplePay = canMakePayment && canMakePayment.applePay;
                     
-                    console.log('Has Google Pay:', hasGooglePay);
-                    console.log('Has Apple Pay:', hasApplePay);
-
                     if (hasGooglePay) {
-                        console.log('Google Pay/Apple Pay is available, creating button');
                         
                         // Create custom Google Pay button
                         container.innerHTML = `
@@ -264,41 +249,10 @@
                         
                         hideLoading();
                         
-                        // Handle custom button click
-                        document.getElementById('google-pay-custom-btn').addEventListener('click', async () => {
-                            try {
-                                showLoading();
-                                console.log('Showing Google Pay request...');
-                                
-                                const result = await paymentRequest.show();
-                                console.log('Google Pay result:', result);
-                                console.log('Google Pay result type:', typeof result);
-                                console.log('Google Pay result keys:', result ? Object.keys(result) : 'null/undefined');
-                                
-                                if (!result) {
-                                    throw new Error('Payment request was cancelled or failed');
-                                }
-                                
-                                if (result.error) {
-                                    throw new Error(result.error.message);
-                                }
-                                
-                                if (result.paymentMethod) {
-                                    await confirmPayment(result.paymentMethod.id, 'google_pay');
-                                } else {
-                                    throw new Error('No payment method returned');
-                                }
-                                
-                            } catch (error) {
-                                console.error('Google Pay error:', error);
-                                showError('Google Pay error: ' + error.message);
-                                hideLoading();
-                            }
-                        });
-                        
-                        // Handle payment method creation
+                        // Handle payment method creation - this is the main handler
                         paymentRequest.on('paymentmethod', async (event) => {
                             try {
+                                showLoading();
                                 await confirmPayment(event.paymentMethod.id, 'google_pay');
                                 event.complete('success');
                             } catch (error) {
@@ -306,9 +260,37 @@
                                 event.complete('fail');
                             }
                         });
+                        
+                        // Handle custom button click - just show the payment request
+                        document.getElementById('google-pay-custom-btn').addEventListener('click', async () => {
+                            try {
+                                showLoading();
+                                
+                                const result = await paymentRequest.show();
+                                
+                                // The paymentmethod event will handle the actual payment
+                                
+                            } catch (error) {
+                                console.error('Google Pay show() error:', error);
+                                
+                                // More specific error messages
+                                let errorMessage = 'Google Pay error: ';
+                                if (error.message.includes('cancelled')) {
+                                    errorMessage += 'Thanh toán đã bị hủy bởi người dùng';
+                                } else if (error.message.includes('failed')) {
+                                    errorMessage += 'Thanh toán thất bại. Vui lòng thử lại';
+                                } else if (error.message.includes('not supported')) {
+                                    errorMessage += 'Google Pay không được hỗ trợ trên thiết bị này';
+                                } else {
+                                    errorMessage += error.message;
+                                }
+                                
+                                showError(errorMessage);
+                                hideLoading();
+                            }
+                        });
                     } else {
                         hideLoading();
-                        console.log('Google Pay not available, showing fallback message');
                         
                         // Show helpful message instead of error
                         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);

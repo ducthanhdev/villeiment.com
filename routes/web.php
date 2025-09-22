@@ -1,9 +1,10 @@
 <?php
 use App\Http\Controllers\AirwallexPaymentController;
 use App\Http\Controllers\DebugAirwallexController;
-
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
+// Stripe routes - put at the top to avoid conflicts
 
 Route::post('checkout/airwallex/create-intent/{token}', [AirwallexPaymentController::class, 'createIntent'])
     ->name('public.checkout.airwallex.createIntent');
@@ -16,17 +17,9 @@ Route::post('checkout/airwallex/confirm-payment/{token}', [AirwallexPaymentContr
 
 // Stripe routes defined below as closures
 
-// Simple test route
-Route::get('test-simple', function () {
-    return response()->json(['success' => true, 'message' => 'Simple test works']);
-});
 
-// Test POST route
-Route::post('test-post', function () {
-    return response()->json(['success' => true, 'message' => 'POST test works']);
-});
 
-// Test Stripe controller directly
+// Stripe Payment Intent creation
 Route::post('stripe/create-intent/{token}', function ($token) {
     try {
         $order = \Botble\Ecommerce\Models\Order::where('token', $token)->first();
@@ -70,10 +63,10 @@ Route::post('stripe/create-intent/{token}', function ($token) {
             'message' => $exception->getMessage()
         ]);
     }
-});
+})->withoutMiddleware(['web']);
 
-// Stripe confirm route
-Route::post('stripe/confirm/{token}', function ($token) {
+// Stripe Payment Confirmation
+Route::post('stripe/confirm/{token}', function ($token, Request $request) {
     try {
         $order = \Botble\Ecommerce\Models\Order::where('token', $token)->first();
         
@@ -84,9 +77,52 @@ Route::post('stripe/confirm/{token}', function ($token) {
             ]);
         }
 
-        // For now, just return success - implement actual confirmation later
+        $stripeSecretKey = env('STRIPE_SECRET_KEY');
+        if (!$stripeSecretKey) {
+            return response()->json([
+                'error' => true,
+                'message' => 'Stripe secret key not configured!'
+            ]);
+        }
+
+        \Stripe\Stripe::setApiKey($stripeSecretKey);
+
+        $paymentIntentId = $request->input('payment_intent_id');
+        $paymentMethodId = $request->input('payment_method_id');
+        $method = $request->input('method', 'google_pay');
+
+        if (!$paymentIntentId || !$paymentMethodId) {
+            return response()->json([
+                'error' => true,
+                'message' => 'Missing payment_intent_id or payment_method_id!'
+            ]);
+        }
+
+        // Confirm the payment intent
+        $paymentIntent = \Stripe\PaymentIntent::retrieve($paymentIntentId);
+        $paymentIntent->confirm([
+            'payment_method' => $paymentMethodId,
+        ]);
+
+        // Update order status
+        $order->update([
+            'payment_status' => 'completed',
+            'status' => 'processing'
+        ]);
+
+        // Create payment record
+        \Botble\Payment\Models\Payment::create([
+            'charge_id' => $paymentIntent->id,
+            'amount' => $order->amount,
+            'currency' => $order->currency_id,
+            'status' => 'completed',
+            'payment_channel' => 'stripe',
+            'order_id' => $order->id,
+        ]);
+
         return response()->json([
             'success' => true,
+            'redirect_url' => route('public.checkout.success', $token),
             'message' => 'Payment confirmed successfully!'
         ]);
 
@@ -96,4 +132,4 @@ Route::post('stripe/confirm/{token}', function ($token) {
             'message' => $exception->getMessage()
         ]);
     }
-});
+})->withoutMiddleware(['web']);
